@@ -10,6 +10,10 @@ Three core actions a user should be able to perform:
 
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
+    My UML design details the skeleton for the PawPal system by creating four classes for
+    the user (Owner), pet (Pet), tasks (Task), and schedule (Schedule). The Owner owns 
+    one or more pets and the schedule, allowing them to add pets, tasks, and create a schedule.
+
 
 **b. Design changes**
 
