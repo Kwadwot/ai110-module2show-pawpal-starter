@@ -10,15 +10,16 @@ Three core actions a user should be able to perform:
 
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
-    My UML design details the skeleton for the PawPal system by creating four classes for
-    the user (Owner), pet (Pet), tasks (Task), and schedule (Schedule). The Owner owns 
-    one or more pets and the schedule, allowing them to add pets, tasks, and create a schedule.
+
+My UML design details the skeleton for the PawPal system by creating four classes for the user (Owner), pet (Pet), tasks (Task), and scheduling (Scheduler). The Owner owns a pet, which has tasks it need to completed (walks, feeding, etc.), and scheduler take an owner object and outputs a plan/schedule based on the owner's contraints and their pet's necessary tasks.
 
 
 **b. Design changes**
 
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
+
+I revised the design from one-pet ownership to multi-pet ownership by changing Owner to store a list of pets. I also simplified relationships by making Scheduler depend only on Owner and collect tasks through the owner’s pets instead of storing a separate pet reference. To make planning explanations clearer, I introduced a PlanResult object that separates scheduled tasks, skipped tasks, and reasoning. I introduced a naming rule where each task name is built from category plus pet name (for example, feed_lucky), and I added duplicate prevention so a pet cannot have two tasks with the same identifier. These changes made the class relationships more consistent and the scheduler output easier to explain and test.
 
 ---
 
