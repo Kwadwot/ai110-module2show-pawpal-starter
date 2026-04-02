@@ -51,6 +51,33 @@ This version of PawPal+ includes a few extra scheduling tools:
 - Automatically create the next recurring task for daily or weekly items when one is completed.
 - Detect schedule conflicts and return warning messages instead of crashing.
 
+## Features
+
+- Priority-aware daily planning:
+	Uses a greedy scheduling approach that orders tasks by priority (`high` -> `medium` -> `low`) and then by shorter duration, scheduling only tasks that fit the owner's available minutes.
+- Sorting by time:
+	Sorts tasks by duration-derived HH:MM with deterministic tie-breaking by task name, and supports ascending or descending order.
+- Filtering tasks:
+	Filters tasks by completion state and/or pet name (case-insensitive, whitespace-tolerant matching).
+- Conflict warnings:
+	Validates strict HH:MM input and returns warnings (instead of raising exceptions) when times are invalid or overlapping.
+- Conflict type classification:
+	Distinguishes same-pet conflicts from multi-pet conflicts for clearer schedule feedback.
+- Daily and weekly recurrence:
+	Automatically creates the next task instance when a recurring task is completed.
+- One-off task behavior:
+	Supports `as_needed` tasks that complete without creating a next occurrence.
+- Explainable output:
+	Produces a summary and per-task reasons for scheduled and skipped tasks.
+
+## 📸 Demo
+
+Final Streamlit app screenshot:
+
+![PawPal+ Streamlit Demo](project_images/demo_screenshot.png)
+
+Caption: This demo view shows the owner/pet inputs, task entry form, sorted task table, conflict-warning checks, and generated schedule output with explanations.
+
 ## Testing PawPal+
 
 Run tests with:

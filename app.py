@@ -73,6 +73,11 @@ if owner_obj.get_name() != owner_name:
 
 owner_obj.update_available_time(int(available_time_minutes))
 
+if "scheduler" not in st.session_state or st.session_state["scheduler"].owner is not owner_obj:
+    st.session_state["scheduler"] = Scheduler(owner_obj)
+
+scheduler_obj = st.session_state["scheduler"]
+
 
 def get_or_create_pet(owner: Owner, name: str, pet_species: str, age: int) -> Pet:
     for existing_pet in owner.get_pets():
@@ -113,6 +118,7 @@ for existing_pet in owner_obj.get_pets():
         break
 
 if current_pet and current_pet.get_tasks():
+    sorted_pet_tasks = scheduler_obj.sort_by_time(current_pet.get_tasks())
     current_tasks = [
         {
             "title": task.get_name(),
@@ -120,10 +126,31 @@ if current_pet and current_pet.get_tasks():
             "priority": task.get_priority(),
             "category": task.get_category(),
         }
-        for task in current_pet.get_tasks()
+        for task in sorted_pet_tasks
     ]
-    st.write("Current tasks:")
+    st.write("Current tasks (sorted by duration):")
     st.table(current_tasks)
+
+    st.markdown("### Optional task times (HH:MM)")
+    st.caption("Enter times to check for conflicts using Scheduler.detect_schedule_conflicts().")
+
+    scheduled_times_by_task_name: dict[str, str] = {}
+    for task in sorted_pet_tasks:
+        time_input = st.text_input(
+            f"Time for {task.get_name()}",
+            key=f"time_{current_pet.get_name()}_{task.get_name()}",
+            placeholder="e.g., 08:30",
+        )
+        if time_input.strip():
+            scheduled_times_by_task_name[task.get_name()] = time_input
+
+    if scheduled_times_by_task_name:
+        conflict_warnings = scheduler_obj.detect_schedule_conflicts(scheduled_times_by_task_name)
+        if conflict_warnings:
+            for warning in conflict_warnings:
+                st.warning(warning)
+        else:
+            st.success("No schedule conflicts detected for the provided times.")
 else:
     st.info("No tasks yet. Add one above.")
 
@@ -137,14 +164,34 @@ if st.button("Generate schedule"):
     if not isinstance(owner_obj, Owner):
         st.error("Owner profile is missing from session state.")
     else:
-        scheduler = Scheduler(owner_obj)
-        plan_result = scheduler.generate_plan()
-        explanation = scheduler.explain_plan(plan_result)
+        scheduler_obj = st.session_state.get("scheduler")
+        if not isinstance(scheduler_obj, Scheduler):
+            scheduler_obj = Scheduler(owner_obj)
+            st.session_state["scheduler"] = scheduler_obj
+
+        plan_result = scheduler_obj.generate_plan()
+        explanation = scheduler_obj.explain_plan(plan_result)
+        incomplete_tasks = scheduler_obj.filter_tasks(is_completed=False)
+        sorted_incomplete_tasks = scheduler_obj.sort_by_time(incomplete_tasks)
 
         st.success("Schedule generated with Scheduler.generate_plan().")
         st.write(plan_result.summary)
 
+        if sorted_incomplete_tasks:
+            st.markdown("### Incomplete tasks (sorted by duration)")
+            st.table(
+                [
+                    {
+                        "task": task.get_name(),
+                        "duration_minutes": task.get_duration(),
+                        "priority": task.get_priority(),
+                    }
+                    for task in sorted_incomplete_tasks
+                ]
+            )
+
         if plan_result.scheduled_tasks:
+            sorted_scheduled_tasks = scheduler_obj.sort_by_time(plan_result.scheduled_tasks)
             st.markdown("### Scheduled tasks")
             st.table(
                 [
@@ -153,7 +200,7 @@ if st.button("Generate schedule"):
                         "duration_minutes": task.get_duration(),
                         "priority": task.get_priority(),
                     }
-                    for task in plan_result.scheduled_tasks
+                    for task in sorted_scheduled_tasks
                 ]
             )
 
