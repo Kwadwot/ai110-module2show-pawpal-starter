@@ -28,12 +28,19 @@ I revised the design from one-pet ownership to multi-pet ownership by changing O
 **a. Constraints and priorities**
 
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
+
+    Scheduler considers time (owner's available time and task duration) and task priority
 - How did you decide which constraints mattered most?
+
+    I determined which constraints to prioritize based on what revelant to scheduling tasks for the Owner based on their pets' necessary tasks.
 
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
+
+    One tradeoff is that the scheduler only checks for exact time matches when it detects conflicts instead of calculating overlapping task durations. That keeps the logic lightweight and easy to explain, but it can miss conflicts where two tasks overlap without starting at the exact same time.
+
 
 ---
 

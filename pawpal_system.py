@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import date, timedelta
 from dataclasses import dataclass, field
 
 
@@ -18,6 +20,7 @@ class Task:
 	description: str = ""
 	frequency: str = FREQUENCY_DAILY
 	is_completed: bool = False
+	due_date: date | None = None
 
 	def __post_init__(self) -> None:
 		"""Validate task fields after initialization."""
@@ -60,6 +63,10 @@ class Task:
 		"""Return the task frequency label."""
 		return self.frequency
 
+	def get_due_date(self) -> date | None:
+		"""Return the task due date, if one is set."""
+		return self.due_date
+
 	def mark_completed(self) -> None:
 		"""Mark this task as completed."""
 		self.is_completed = True
@@ -75,6 +82,35 @@ class Task:
 	def is_high_priority(self) -> bool:
 		"""Return True if this task has high priority."""
 		return self.priority == "high"
+
+	def is_recurring(self) -> bool:
+		"""Return True if this task repeats on a schedule."""
+		return self.frequency in {FREQUENCY_DAILY, FREQUENCY_WEEKLY}
+
+	def get_next_due_date(self, completed_on: date | None = None) -> date | None:
+		"""Return the next due date for a recurring task."""
+		if not self.is_recurring():
+			return None
+
+		base_date = completed_on or self.due_date or date.today()
+		interval_days = 1 if self.frequency == FREQUENCY_DAILY else 7
+		return base_date + timedelta(days=interval_days)
+
+	def create_next_occurrence(self, completed_on: date | None = None) -> Task | None:
+		"""Create the next recurring task instance, if applicable."""
+		next_due_date = self.get_next_due_date(completed_on)
+		if next_due_date is None:
+			return None
+
+		return Task(
+			name=f"{self.name}_{next_due_date.isoformat()}",
+			duration_minutes=self.duration_minutes,
+			priority=self.priority,
+			category=self.category,
+			description=self.description,
+			frequency=self.frequency,
+			due_date=next_due_date,
+		)
 
 	@staticmethod
 	def build_task_name(category: str, pet_name: str) -> str:
@@ -210,6 +246,105 @@ class Scheduler:
 		"""Initialize the scheduler with an owner."""
 		self.owner = owner
 
+	@staticmethod
+	def _is_valid_hhmm(value: str) -> bool:
+		"""Return True when a string matches strict 24-hour HH:MM format."""
+		parts = value.split(":")
+		if len(parts) != 2:
+			return False
+
+		hour_text, minute_text = parts
+		if len(hour_text) != 2 or len(minute_text) != 2:
+			return False
+		if not hour_text.isdigit() or not minute_text.isdigit():
+			return False
+
+		hour = int(hour_text)
+		minute = int(minute_text)
+		return 0 <= hour <= 23 and 0 <= minute <= 59
+
+	def detect_schedule_conflicts(self, scheduled_times_by_task_name: dict[str, str]) -> list[str]:
+		"""Return warning messages for tasks that share the same scheduled time."""
+		warnings: list[str] = []
+		time_slots: dict[str, list[tuple[str, str]]] = defaultdict(list)
+
+		for pet in self.owner.get_pets():
+			for task in pet.get_tasks():
+				time_value = scheduled_times_by_task_name.get(task.name)
+				if time_value is None:
+					continue
+
+				normalized_time = time_value.strip()
+				if not self._is_valid_hhmm(normalized_time):
+					warnings.append(
+						f"Warning: task '{task.name}' has invalid time '{time_value}'. Expected HH:MM."
+					)
+					continue
+
+				time_slots[normalized_time].append((pet.name, task.name))
+
+		for time_value, assignments in sorted(time_slots.items()):
+			if len(assignments) < 2:
+				continue
+
+			task_descriptions = ", ".join(
+				f"{task_name} ({pet_name})" for pet_name, task_name in assignments
+			)
+			conflict_type = "same-pet" if len({pet_name for pet_name, _ in assignments}) == 1 else "multi-pet"
+			warnings.append(
+				f"Warning: {conflict_type} conflict at {time_value} for {task_descriptions}."
+			)
+
+		return warnings
+
+	def filter_tasks(
+		self,
+		*,
+		is_completed: bool | None = None,
+		pet_name: str | None = None,
+	) -> list[Task]:
+		"""Return tasks filtered by completion status and/or pet name."""
+		filtered_tasks: list[Task] = []
+		normalized_pet_name = pet_name.lower().strip() if pet_name is not None else None
+
+		for pet in self.owner.get_pets():
+			if normalized_pet_name is not None and pet.name.lower().strip() != normalized_pet_name:
+				continue
+
+			for task in pet.get_tasks():
+				if is_completed is not None and task.is_done() != is_completed:
+					continue
+				filtered_tasks.append(task)
+
+		return filtered_tasks
+
+	def complete_task_for_pet(
+		self,
+		pet_name: str,
+		task_name: str,
+		*,
+		completed_on: date | None = None,
+	) -> Task | None:
+		"""Complete a pet task and add the next recurring instance when applicable."""
+		normalized_pet_name = pet_name.lower().strip()
+		normalized_task_name = task_name.lower().strip()
+
+		for pet in self.owner.get_pets():
+			if pet.name.lower().strip() != normalized_pet_name:
+				continue
+
+			for task in pet.tasks:
+				if task.name.lower().strip() != normalized_task_name:
+					continue
+
+				task.mark_completed()
+				next_task = task.create_next_occurrence(completed_on)
+				if next_task is not None:
+					pet.add_task(next_task)
+				return next_task
+
+		raise ValueError(f"task '{task_name}' not found for pet '{pet_name}'")
+
 	def collect_tasks_from_owner_pets(self) -> list[Task]:
 		"""Collect all tasks from every pet owned by the owner."""
 		all_tasks: list[Task] = []
@@ -260,3 +395,19 @@ class Scheduler:
 			lines.append(f"- {task.name}: {reason}")
 
 		return "\n".join(lines)
+
+	@staticmethod
+	def _duration_to_hhmm(duration_minutes: int) -> str:
+		"""Convert a task duration in minutes into HH:MM format."""
+		hours, minutes = divmod(duration_minutes, 60)
+		return f"{hours:02d}:{minutes:02d}"
+
+	@staticmethod
+	def _duration_sort_key(task: Task) -> tuple[int, int, str]:
+		"""Return a stable sort key derived from a task's duration minutes."""
+		hours, minutes = divmod(task.duration_minutes, 60)
+		return hours, minutes, task.name.lower()
+
+	def sort_by_time(self, tasks: list[Task], *, descending: bool = False) -> list[Task]:
+		"""Return tasks sorted by duration-derived HH:MM, with optional reverse order."""
+		return sorted(tasks, key=self._duration_sort_key, reverse=descending)

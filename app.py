@@ -1,5 +1,7 @@
 import streamlit as st
 
+from pawpal_system import Task, Pet, Owner, Scheduler
+
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
 st.title("🐾 PawPal+")
@@ -42,12 +44,44 @@ st.subheader("Quick Demo Inputs (UI only)")
 owner_name = st.text_input("Owner name", value="Jordan")
 pet_name = st.text_input("Pet name", value="Mochi")
 species = st.selectbox("Species", ["dog", "cat", "other"])
+pet_age = st.number_input("Pet age (years)", min_value=0, max_value=40, value=2)
+available_time_minutes = st.number_input(
+    "Available care time today (minutes)", min_value=0, max_value=720, value=60
+)
 
 st.markdown("### Tasks")
 st.caption("Add a few tasks. In your final version, these should feed into your scheduler.")
 
-if "tasks" not in st.session_state:
-    st.session_state.tasks = []
+if "owner" not in st.session_state:
+    st.session_state["owner"] = Owner(
+        name=owner_name,
+        available_time_minutes=int(available_time_minutes),
+        preferences=[],
+        pets=[],
+    )
+
+owner_obj = st.session_state["owner"]
+
+if owner_obj.get_name() != owner_name:
+    st.session_state["owner"] = Owner(
+        name=owner_name,
+        available_time_minutes=int(available_time_minutes),
+        preferences=owner_obj.get_preferences(),
+        pets=[],
+    )
+    owner_obj = st.session_state["owner"]
+
+owner_obj.update_available_time(int(available_time_minutes))
+
+
+def get_or_create_pet(owner: Owner, name: str, pet_species: str, age: int) -> Pet:
+    for existing_pet in owner.get_pets():
+        if existing_pet.name == name:
+            return existing_pet
+
+    new_pet = Pet(name=name, species=pet_species, age=age)
+    owner.add_pet(new_pet)
+    return new_pet
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -58,13 +92,38 @@ with col3:
     priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
 
 if st.button("Add task"):
-    st.session_state.tasks.append(
-        {"title": task_title, "duration_minutes": int(duration), "priority": priority}
-    )
+    try:
+        pet_obj = get_or_create_pet(owner_obj, pet_name, species, int(pet_age))
+        task_obj = Task(
+            name=task_title,
+            duration_minutes=int(duration),
+            priority=priority,
+            category="care",
+            description=f"{priority.title()} priority task for {pet_name}",
+        )
+        pet_obj.add_task(task_obj)
+        st.success(f"Added task '{task_obj.name}' for {pet_obj.name}.")
+    except ValueError as error:
+        st.error(str(error))
 
-if st.session_state.tasks:
+current_pet = None
+for existing_pet in owner_obj.get_pets():
+    if existing_pet.name == pet_name:
+        current_pet = existing_pet
+        break
+
+if current_pet and current_pet.get_tasks():
+    current_tasks = [
+        {
+            "title": task.get_name(),
+            "duration_minutes": task.get_duration(),
+            "priority": task.get_priority(),
+            "category": task.get_category(),
+        }
+        for task in current_pet.get_tasks()
+    ]
     st.write("Current tasks:")
-    st.table(st.session_state.tasks)
+    st.table(current_tasks)
 else:
     st.info("No tasks yet. Add one above.")
 
@@ -74,15 +133,43 @@ st.subheader("Build Schedule")
 st.caption("This button should call your scheduling logic once you implement it.")
 
 if st.button("Generate schedule"):
-    st.warning(
-        "Not implemented yet. Next step: create your scheduling logic (classes/functions) and call it here."
-    )
-    st.markdown(
-        """
-Suggested approach:
-1. Design your UML (draft).
-2. Create class stubs (no logic).
-3. Implement scheduling behavior.
-4. Connect your scheduler here and display results.
-"""
-    )
+    owner_obj = st.session_state.get("owner")
+    if not isinstance(owner_obj, Owner):
+        st.error("Owner profile is missing from session state.")
+    else:
+        scheduler = Scheduler(owner_obj)
+        plan_result = scheduler.generate_plan()
+        explanation = scheduler.explain_plan(plan_result)
+
+        st.success("Schedule generated with Scheduler.generate_plan().")
+        st.write(plan_result.summary)
+
+        if plan_result.scheduled_tasks:
+            st.markdown("### Scheduled tasks")
+            st.table(
+                [
+                    {
+                        "task": task.get_name(),
+                        "duration_minutes": task.get_duration(),
+                        "priority": task.get_priority(),
+                    }
+                    for task in plan_result.scheduled_tasks
+                ]
+            )
+
+        if plan_result.skipped_tasks:
+            st.markdown("### Skipped tasks")
+            st.table(
+                [
+                    {
+                        "task": task.get_name(),
+                        "duration_minutes": task.get_duration(),
+                        "priority": task.get_priority(),
+                        "reason": plan_result.reasons_by_task_name.get(task.get_name(), ""),
+                    }
+                    for task in plan_result.skipped_tasks
+                ]
+            )
+
+        with st.expander("Plan explanation"):
+            st.text(explanation)
