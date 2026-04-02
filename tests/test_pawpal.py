@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
-from datetime import date
+from datetime import date, timedelta
+
+import pytest
 
 # Add parent directory to path so we can import pawpal_system
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -274,3 +276,183 @@ def test_detect_schedule_conflicts_invalid_time_returns_warning_not_exception():
 
     assert len(warnings) == 1
     assert "invalid time '9:00'" in warnings[0]
+
+
+def test_filter_tasks_returns_empty_for_pet_with_no_tasks():
+    """Verify filtering is safe when a pet has no tasks."""
+    lucky = Pet(name="Lucky", species="dog", age=4)
+    owner = Owner(name="Jordan", available_time_minutes=60, preferences=[], pets=[lucky])
+    scheduler = Scheduler(owner)
+
+    assert scheduler.filter_tasks() == []
+    assert scheduler.filter_tasks(is_completed=False) == []
+
+
+def test_generate_plan_with_no_pets_returns_empty_result_and_message():
+    """Verify planning works for owners without pets/tasks."""
+    owner = Owner(name="Jordan", available_time_minutes=60, preferences=[], pets=[])
+    scheduler = Scheduler(owner)
+
+    result = scheduler.generate_plan()
+
+    assert result.scheduled_tasks == []
+    assert result.skipped_tasks == []
+    assert result.summary == "Scheduled 0 task(s), skipped 0 task(s). Used 0/60 minutes."
+    assert scheduler.explain_plan(result) == "No tasks available to plan."
+
+
+def test_complete_task_for_pet_raises_for_unknown_pet_or_task():
+    """Verify completion fails clearly for unknown pet/task names."""
+    lucky = Pet(name="Lucky", species="dog", age=4)
+    lucky.add_task(Task(name="feed_lucky", duration_minutes=10, priority="high", category="feed"))
+    owner = Owner(name="Jordan", available_time_minutes=60, preferences=[], pets=[lucky])
+    scheduler = Scheduler(owner)
+
+    with pytest.raises(ValueError, match="task 'feed_lucky' not found for pet 'Mochi'"):
+        scheduler.complete_task_for_pet("Mochi", "feed_lucky")
+
+    with pytest.raises(ValueError, match="task 'walk_lucky' not found for pet 'Lucky'"):
+        scheduler.complete_task_for_pet("Lucky", "walk_lucky")
+
+
+def test_complete_as_needed_task_marks_done_and_creates_no_next_instance():
+    """Verify one-off tasks are completed without creating recurring follow-up tasks."""
+    lucky = Pet(name="Lucky", species="dog", age=4)
+    one_off = Task(
+        name="vet_visit_lucky",
+        duration_minutes=25,
+        priority="high",
+        category="health",
+        frequency="as_needed",
+    )
+    lucky.add_task(one_off)
+    owner = Owner(name="Jordan", available_time_minutes=60, preferences=[], pets=[lucky])
+    scheduler = Scheduler(owner)
+
+    next_task = scheduler.complete_task_for_pet("Lucky", "vet_visit_lucky")
+
+    assert one_off.is_done()
+    assert next_task is None
+    assert [task.name for task in lucky.get_tasks()] == ["vet_visit_lucky"]
+
+
+def test_recurring_next_due_date_without_due_date_uses_today_fallback():
+    """Verify recurring next dates use date.today() when no base date is provided."""
+    daily_task = Task(
+        name="feed_lucky",
+        duration_minutes=10,
+        priority="high",
+        category="feed",
+        frequency="daily",
+    )
+    weekly_task = Task(
+        name="groom_lucky",
+        duration_minutes=20,
+        priority="medium",
+        category="grooming",
+        frequency="weekly",
+    )
+
+    assert daily_task.get_next_due_date() == date.today() + timedelta(days=1)
+    assert weekly_task.get_next_due_date() == date.today() + timedelta(days=7)
+
+
+def test_recurring_next_due_date_handles_calendar_boundaries():
+    """Verify recurring dates cross month/year boundaries correctly."""
+    daily_task = Task(
+        name="feed_lucky",
+        duration_minutes=10,
+        priority="high",
+        category="feed",
+        frequency="daily",
+    )
+    weekly_task = Task(
+        name="groom_lucky",
+        duration_minutes=20,
+        priority="medium",
+        category="grooming",
+        frequency="weekly",
+    )
+
+    assert daily_task.get_next_due_date(date(2026, 1, 31)) == date(2026, 2, 1)
+    assert weekly_task.get_next_due_date(date(2026, 12, 28)) == date(2027, 1, 4)
+
+
+def test_complete_recurring_task_raises_when_next_occurrence_name_collides():
+    """Verify duplicate recurring names surface a clear uniqueness error."""
+    lucky = Pet(name="Lucky", species="dog", age=4)
+    recurring_task = Task(
+        name="feed_lucky",
+        duration_minutes=10,
+        priority="high",
+        category="feed",
+        frequency="daily",
+        due_date=date(2026, 4, 1),
+    )
+    existing_next_task = Task(
+        name="feed_lucky_2026-04-02",
+        duration_minutes=10,
+        priority="high",
+        category="feed",
+        frequency="daily",
+        due_date=date(2026, 4, 2),
+    )
+    lucky.add_task(recurring_task)
+    lucky.add_task(existing_next_task)
+
+    owner = Owner(name="Jordan", available_time_minutes=60, preferences=[], pets=[lucky])
+    scheduler = Scheduler(owner)
+
+    with pytest.raises(ValueError, match="task name 'feed_lucky_2026-04-02' already exists"):
+        scheduler.complete_task_for_pet("Lucky", "feed_lucky", completed_on=date(2026, 4, 1))
+
+
+def test_sort_by_time_returns_empty_for_empty_task_list():
+    """Verify sorting handles empty input lists."""
+    owner = Owner(name="Jordan", available_time_minutes=60, preferences=[], pets=[])
+    scheduler = Scheduler(owner)
+
+    assert scheduler.sort_by_time([]) == []
+
+
+def test_sort_by_time_handles_large_durations():
+    """Verify sorting still works when durations are very large."""
+    owner = Owner(name="Jordan", available_time_minutes=60, preferences=[], pets=[])
+    scheduler = Scheduler(owner)
+
+    tasks = [
+        Task(name="short", duration_minutes=90, priority="high", category="care"),
+        Task(name="long", duration_minutes=24 * 60 + 5, priority="high", category="care"),
+    ]
+
+    sorted_tasks = scheduler.sort_by_time(tasks)
+
+    assert [task.name for task in sorted_tasks] == ["short", "long"]
+
+
+def test_generate_plan_exact_time_budget_schedules_all_tasks():
+    """Verify exact available minutes schedules all pending tasks."""
+    lucky = Pet(name="Lucky", species="dog", age=4)
+    lucky.add_task(Task(name="feed_lucky", duration_minutes=10, priority="high", category="feed"))
+    lucky.add_task(Task(name="walk_lucky", duration_minutes=20, priority="medium", category="walk"))
+    owner = Owner(name="Jordan", available_time_minutes=30, preferences=[], pets=[lucky])
+    scheduler = Scheduler(owner)
+
+    result = scheduler.generate_plan()
+
+    assert [task.name for task in result.scheduled_tasks] == ["feed_lucky", "walk_lucky"]
+    assert result.skipped_tasks == []
+
+
+def test_generate_plan_with_zero_available_time_skips_all_tasks():
+    """Verify zero available minutes skips every incomplete task."""
+    lucky = Pet(name="Lucky", species="dog", age=4)
+    lucky.add_task(Task(name="feed_lucky", duration_minutes=10, priority="high", category="feed"))
+    lucky.add_task(Task(name="walk_lucky", duration_minutes=20, priority="medium", category="walk"))
+    owner = Owner(name="Jordan", available_time_minutes=0, preferences=[], pets=[lucky])
+    scheduler = Scheduler(owner)
+
+    result = scheduler.generate_plan()
+
+    assert result.scheduled_tasks == []
+    assert [task.name for task in result.skipped_tasks] == ["feed_lucky", "walk_lucky"]

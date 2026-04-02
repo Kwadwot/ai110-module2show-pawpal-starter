@@ -50,3 +50,15 @@ This version of PawPal+ includes a few extra scheduling tools:
 - Filter tasks by completion status or pet name.
 - Automatically create the next recurring task for daily or weekly items when one is completed.
 - Detect schedule conflicts and return warning messages instead of crashing.
+
+## Testing PawPal+
+
+Run tests with:
+
+python -m pytest
+
+The tests currently cover core scheduling reliability, including task completion state changes, task addition, sorting by duration (ascending/descending and tie behavior), filtering by completion and pet name, recurring task next-date logic and follow-up creation, conflict detection (same-pet and multi-pet), and important edge cases such as empty task/pet states, not-found completion paths, non-recurring completion behavior, calendar-boundary recurring dates, duplicate recurring name collisions, and plan-generation boundaries.
+
+Confidence Level: 5/5 stars
+
+Rationale: latest local run reports 25 passed, 0 failed.
